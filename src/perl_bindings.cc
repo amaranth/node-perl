@@ -27,8 +27,18 @@ class PerlFoo {
 protected:
     PerlInterpreter *my_perl;
 
-    PerlFoo(): my_perl(NULL) { }
-    PerlFoo(PerlInterpreter *myp): my_perl(myp) { }
+    PerlFoo(): my_perl(NULL)
+    {
+		// std::cerr << "[Construct PerlFoo(NULL)]" << std::endl;
+    }
+    PerlFoo(PerlInterpreter *myp): my_perl(myp)
+    {
+		// v8::Local << "[Construct PerlFoo]" << std::endl;
+    }
+	~PerlFoo()
+    {
+		// v8::Local << "[Deconstruct PerlFoo]" << std::endl;
+    }
 public:
 	v8::Local<v8::Value> perl2js(SV * sv) {
 		Nan::EscapableHandleScope scope;
@@ -147,9 +157,11 @@ public:
     std::string name_;
 
     NodePerlMethod(SV *sv, const char * name, PerlInterpreter *myp): sv_(sv), name_(name), PerlFoo(myp) {
+		// v8::Local << "[Construct NodePerlMethod]" << std::endl;
         SvREFCNT_inc(sv);
     }
     ~NodePerlMethod() {
+		// v8::Local << "[Deconstruct NodePerlMethod]" << std::endl;
         SvREFCNT_dec(sv_);
     }
 	static Nan::Persistent<v8::FunctionTemplate> constructor_template;
@@ -160,6 +172,7 @@ public:
 	}
 
     static NAN_MODULE_INIT(Init) {
+		// v8::Local << "[NAN_MODULE_INIT NodePerlMethod]" << std::endl;
 		// Prepare constructor template
 		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(NodePerlMethod::New);
 		tpl->SetClassName(Nan::New("NodePerlMethod").ToLocalChecked());
@@ -177,6 +190,7 @@ public:
 			Nan::GetFunction(tpl).ToLocalChecked());
     }
     static NAN_METHOD(New) {
+		// v8::Local << "[New NodePerlMethod]" << std::endl;
 		if (info.IsConstructCall()) {
 			const Nan::FunctionCallbackInfo<v8::Value>& args = info;
 			ARG_EXT(0, jssv);
@@ -191,6 +205,7 @@ public:
 		else {
 			const int argc = 3;
 			v8::Local<v8::Value> argv[argc] = { info[0], info[1], info[2] };
+			// info.GetReturnValue().Set(Nan::NewInstance(Nan::New(constructor()), argc, argv).ToLocalChecked());
 			v8::Local<v8::Function> cons = Nan::New(constructor());
 			info.GetReturnValue().Set(cons->NewInstance(argc, argv));
 		}
@@ -220,6 +235,7 @@ public:
 	}
 
 	static NAN_MODULE_INIT(Init) {
+		// v8::Local << "[NAN_MODULE_INIT NodePerlObject]" << std::endl;
 		// Prepare constructor template
 		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
 		tpl->SetClassName(Nan::New("NodePerlObject").ToLocalChecked());
@@ -264,9 +280,11 @@ public:
     }
 
     NodePerlObject(SV *sv, PerlInterpreter *myp): sv_(sv), PerlFoo(myp) {
+		// v8::Local << "[Construct NodePerlObject]" << std::endl;
         SvREFCNT_inc(sv);
     }
     ~NodePerlObject() {
+		// v8::Local << "[Deconstruct NodePerlObject]" << std::endl;
         SvREFCNT_dec(sv_);
     }
     static NAN_METHOD(getClassName) {
@@ -299,6 +317,7 @@ public:
     }
 
     static NAN_METHOD(New) {
+		// v8::Local << "[New NodePerlMethod]" << std::endl;
 		const Nan::FunctionCallbackInfo<v8::Value>& args = info;
 
         ARG_EXT(0, jssv);
@@ -320,6 +339,7 @@ public:
 	}
 
     static NAN_MODULE_INIT(Init) {
+		// v8::Local << "[NAN_MODULE_INIT NodePerlObject]" << std::endl;
 		// Prepare constructor template
 		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
 		tpl->SetClassName(Nan::New("NodePerlClass").ToLocalChecked());
@@ -332,6 +352,11 @@ public:
 		Nan::Set(target, Nan::New("NodePerlClass").ToLocalChecked(),
 			Nan::GetFunction(tpl).ToLocalChecked());
     }
+
+	~NodePerlClass()
+	{
+		// v8::Local << "[Deconstructor NodePerlClass]" << std::endl;
+	}
 };
 
 class NodePerl : public Nan::ObjectWrap, public PerlFoo {
@@ -343,11 +368,13 @@ public:
 	}
 
 	static NAN_MODULE_INIT(Init) {
+		// v8::Local << "[NAN_MODULE_INIT NodePerl]" << std::endl;
 		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
         Nan::SetPrototypeMethod(tpl, "evaluate", NodePerl::evaluate);
         Nan::SetPrototypeMethod(tpl, "getClass", NodePerl::getClass);
         Nan::SetPrototypeMethod(tpl, "call",	 NodePerl::call);
         Nan::SetPrototypeMethod(tpl, "callList", NodePerl::callList);
+        Nan::SetPrototypeMethod(tpl, "destroy", NodePerl::destroy);
         tpl->InstanceTemplate()->SetInternalFieldCount(1);
         Nan::SetMethod(tpl, "blessed", NodePerl::blessed);
         
@@ -357,33 +384,40 @@ public:
     }
 
     NodePerl() : PerlFoo() {
-        // std::cerr << "[Construct Perl]" << std::endl;
+        // v8::Local << "[Construct Perl]" << std::endl;
 
-        char **av = {NULL};
-        const char *embedding[] = { "", "-e", "0" };
+		char **av = { NULL };
+		const char *embedding[] = { "", "-e", "0" };
 
-        // XXX PL_origalen makes segv.
-        // PL_origalen = 1; // for save $0
-        PERL_SYS_INIT3(0,&av,NULL);
-        my_perl = perl_alloc();
-        perl_construct(my_perl);
+		// XXX PL_origalen makes segv.
+		// PL_origalen = 1; // for save $0
+		PERL_SYS_INIT3(0, &av, NULL);
+		my_perl = perl_alloc();
+		perl_construct(my_perl);
 
-        perl_parse(my_perl, xs_init, 3, (char**)embedding, NULL);
-        PL_exit_flags |= PERL_EXIT_DESTRUCT_END;
-        perl_run(my_perl);
+		perl_parse(my_perl, xs_init, 3, (char**)embedding, NULL);
+		PL_exit_flags |= PERL_EXIT_DESTRUCT_END;
+		perl_run(my_perl);
     }
 
     ~NodePerl() {
-        // std::cerr << "[Destruct Perl]" << std::endl;
-        PL_perl_destruct_level = 2;
-        perl_destruct(my_perl);
-        perl_free(my_perl);
+        // v8::Local << "[Destruct Perl]" << std::endl;
+
+		PL_perl_destruct_level = 2;
+		perl_destruct(my_perl);
+		perl_free(my_perl);
+		// PERL_SYS_TERM();
     }
 
     static NAN_METHOD(New) {
-        if (!info.IsConstructCall())
-            return info.GetReturnValue().Set(info.Callee()->NewInstance());
+		// v8::Local << "[New NodePerlObject]" << std::endl;
+		if (!info.IsConstructCall()) {
+			std::cerr << "[NodePerl]: !IsConstructCall" << std::endl;
+			return info.GetReturnValue().Set(info.Callee()->NewInstance());
+			// return info.GetReturnValue().Set(Nan::NewInstance(Nan::New(constructor()), 0, {}).ToLocalChecked());
+		}
         (new NodePerl())->Wrap(info.Holder());
+
         return info.GetReturnValue().Set(info.Holder());
     }
 
@@ -429,7 +463,18 @@ public:
 		info.GetReturnValue().Set(nodePerl->CallMethod2(info, true));
     }
 
+	static NAN_METHOD(destroy) {
+		return Unwrap<NodePerl>(info.This())->destroy();
+	}
+
 private:
+	void destroy()
+	{
+		NodePerl *nodePerl = this;
+		this->persistent().Reset();		
+		this->~NodePerl();
+	}
+
     v8::Local<v8::Value> getClass(const char *name) const
     {
         Nan::EscapableHandleScope scope;
@@ -437,6 +482,7 @@ private:
         v8::Local<v8::Value> arg1 = Nan::New<v8::External>(my_perl);
         v8::Local<v8::Value> info[] = {arg0, arg1};
         v8::Local<v8::Object> retval(
+			// Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlClass::constructor_template)->GetFunction(), 2, info).ToLocalChecked()
 			Nan::New<v8::FunctionTemplate>(NodePerlClass::constructor_template)->GetFunction()->NewInstance(2, info)
         );
         return scope.Escape(retval);
@@ -510,6 +556,7 @@ v8::Local<v8::Value> PerlFoo::perl2js_rv(SV * rv) {
 		v8::Local<v8::Value> arg1 = Nan::New<v8::External>(my_perl);
 	    v8::Local<v8::Value> args[] = {arg0, arg1};
         v8::Local<v8::Object> retval(
+            // Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlObject::constructor_template)->GetFunction(),2, args).ToLocalChecked()
             Nan::New<v8::FunctionTemplate>(NodePerlObject::constructor_template)->GetFunction()->NewInstance(2, args)
         );
         return scope.Escape(retval);
@@ -564,6 +611,7 @@ Nan::Persistent<v8::FunctionTemplate> NodePerlClass::constructor_template;
 #include <psapi.h>
 #include <stdio.h>
 static NAN_METHOD(InitPerl) {
+	// v8::Local << "[NAN_METHOD InitPerl]" << std::endl;
 	auto uMode = SetErrorMode(SEM_FAILCRITICALERRORS);
 	auto hModule = LoadLibraryEx(LIBPERL_DIR LIBPERL, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 	auto error = GetLastError();
@@ -586,6 +634,7 @@ static NAN_METHOD(InitPerl) {
 #else
 #include <dlfcn.h>
 static NAN_METHOD(InitPerl) {
+	// v8::Local << "[NAN_METHOD InitPerl]" << std::endl;
     void *lib = dlopen(LIBPERL, RTLD_LAZY|RTLD_GLOBAL);
     if (lib) {
         dlclose(lib);
@@ -599,6 +648,8 @@ static NAN_METHOD(InitPerl) {
 #endif
 
 extern "C" NAN_MODULE_INIT(init) {
+
+	// v8::Local << "[NAN_MODULE_INIT extern c]" << std::endl;
     {
 	    v8::Local<v8::FunctionTemplate> t = Nan::New<v8::FunctionTemplate>(InitPerl);
         target->Set(Nan::New("InitPerl").ToLocalChecked(), t->GetFunction());
