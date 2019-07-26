@@ -348,6 +348,7 @@ public:
         Nan::SetPrototypeMethod(tpl, "getClass", NodePerl::getClass);
         Nan::SetPrototypeMethod(tpl, "call",	 NodePerl::call);
         Nan::SetPrototypeMethod(tpl, "callList", NodePerl::callList);
+        Nan::SetPrototypeMethod(tpl, "destroy", NodePerl::destroy);
         tpl->InstanceTemplate()->SetInternalFieldCount(1);
         Nan::SetMethod(tpl, "blessed", NodePerl::blessed);
         
@@ -429,7 +430,18 @@ public:
 		info.GetReturnValue().Set(nodePerl->CallMethod2(info, true));
     }
 
+	static NAN_METHOD(destroy) {
+		return Unwrap<NodePerl>(info.This())->destroy();
+	}
+
 private:
+	void destroy()
+	{
+		NodePerl *nodePerl = this;
+		this->persistent().Reset();		
+		this->~NodePerl();
+	}
+
     v8::Local<v8::Value> getClass(const char *name) const
     {
         Nan::EscapableHandleScope scope;
