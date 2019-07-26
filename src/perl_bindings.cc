@@ -191,8 +191,7 @@ public:
 		else {
 			const int argc = 3;
 			v8::Local<v8::Value> argv[argc] = { info[0], info[1], info[2] };
-			v8::Local<v8::Function> cons = Nan::New(constructor());
-			info.GetReturnValue().Set(cons->NewInstance(argc, argv));
+			info.GetReturnValue().Set(Nan::NewInstance(Nan::New(constructor()), argc, argv).ToLocalChecked());
 		}
     }
     static NAN_METHOD(call) {
@@ -258,7 +257,7 @@ public:
         v8::Local<v8::Value> arg2 = propertyName;
         v8::Local<v8::Value> args[] = {arg0, arg1, arg2};
         v8::Local<v8::Object> retval(
-			Nan::New<v8::FunctionTemplate>(NodePerlMethod::constructor_template)->GetFunction()->NewInstance(3, args)
+			Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlMethod::constructor_template)->GetFunction(), 3, args).ToLocalChecked()
         );
         return scope.Escape(retval);
     }
@@ -382,8 +381,9 @@ public:
     }
 
     static NAN_METHOD(New) {
-        if (!info.IsConstructCall())
-            return info.GetReturnValue().Set(info.Callee()->NewInstance());
+		if (!info.IsConstructCall()) {
+			return info.GetReturnValue().Set(Nan::NewInstance(Nan::New(constructor()), 0, {}).ToLocalChecked());
+		}
         (new NodePerl())->Wrap(info.Holder());
         return info.GetReturnValue().Set(info.Holder());
     }
@@ -449,7 +449,7 @@ private:
         v8::Local<v8::Value> arg1 = Nan::New<v8::External>(my_perl);
         v8::Local<v8::Value> info[] = {arg0, arg1};
         v8::Local<v8::Object> retval(
-			Nan::New<v8::FunctionTemplate>(NodePerlClass::constructor_template)->GetFunction()->NewInstance(2, info)
+			Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlClass::constructor_template)->GetFunction(), 2, info).ToLocalChecked()
         );
         return scope.Escape(retval);
     }
@@ -522,7 +522,7 @@ v8::Local<v8::Value> PerlFoo::perl2js_rv(SV * rv) {
 		v8::Local<v8::Value> arg1 = Nan::New<v8::External>(my_perl);
 	    v8::Local<v8::Value> args[] = {arg0, arg1};
         v8::Local<v8::Object> retval(
-            Nan::New<v8::FunctionTemplate>(NodePerlObject::constructor_template)->GetFunction()->NewInstance(2, args)
+            Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlObject::constructor_template)->GetFunction(),2, args).ToLocalChecked()
         );
         return scope.Escape(retval);
     } else if (svt == SVt_PVHV) {
