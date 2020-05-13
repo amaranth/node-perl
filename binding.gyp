@@ -10,7 +10,7 @@
                 '<!@(perl -MExtUtils::Embed -e ldopts)'
             ],
             'include_dirs' : [
-                '<!(node -e "require(\'nan\')")'
+                '<!@(node -p "require(\'node-addon-api\').include")'
             ],
             'cflags!': [ '-fno-exceptions' ],
             'cflags_cc!': [ '-fno-exceptions' ],
@@ -18,6 +18,7 @@
                 '<!@(perl -MExtUtils::Embed -e ccopts)',
                 '<!@(perl utils/libperl.pl)'
             ],
+            'defines': [ 'NAPI_DISABLE_CPP_EXCEPTIONS' ],
             'conditions': [
                 [ 'OS=="win"', {
                     'include_dirs': [

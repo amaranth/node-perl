@@ -1,7 +1,8 @@
 #pragma once
 
 // #define BUILDING_NODE_EXTENSION
-// #include <node.h>
+// #include <napi.h>
+#include <uv.h>
 // #include <node_buffer.h>
 // #include <v8.h>
 
@@ -9,17 +10,17 @@
  * exception utilities
  */
 #define THROW_TYPE_ERROR(str) \
-    Nan::ThrowError(Exception::TypeError(Nan::New(str).ToLocalChecked()))
+    Napi::ThrowError::New(env, Exception::TypeError(Napi::New(env, str)))
 
 /* ******************************************************
  * Argument utilities.
  */
 #define ARG_EXT(I, VAR) \
     if (args.Length() <= (I) || !args[I]->IsExternal()) { \
-        Nan::ThrowError(v8::Exception::TypeError( \
-            Nan::New("Argument " #I " must be an external").ToLocalChecked())); \
+        Napi::ThrowError(v8::Exception::TypeError( \
+            Napi::String::New(env, "Argument " #I " must be an external"))); \
 	} \
-    v8::Local<v8::External> VAR = v8::Local<v8::External>::Cast(args[I]);
+    Napi::External VAR = args[I].As<Napi::External>();
 
 /**
  * ARG_STR(0, src);
@@ -28,29 +29,29 @@
  */
 #define ARG_STR(I, VAR) \
     if (args.Length() <= (I)) { \
-        Nan::ThrowError(v8::Exception::TypeError( \
-            Nan::New("Argument " #I " must be a string").ToLocalChecked())); \
+        Napi::ThrowError(v8::Exception::TypeError( \
+            Napi::String::New(env, "Argument " #I " must be a string"))); \
 	} \
-    v8::String::Utf8Value VAR(args[I]->ToString());
+    Napi::String VAR(env, args[I]->ToString());
 
 #define ARG_OBJ(I, VAR) \
-    if (args.Length() <= (I) || !args[I]->IsObject()) { \
-        Nan::ThrowError(v8::Exception::TypeError( \
-            Nan::New("Argument " #I " must be a object").ToLocalChecked())); \
+    if (args.Length() <= (I) || !args[I].IsObject()) { \
+        Napi::ThrowError(v8::Exception::TypeError( \
+            Napi::String::New(env, "Argument " #I " must be a object"))); \
 	} \
-    v8::Local<v8::Object> VAR = v8::Local<v8::Object>::Cast(args[I]);
+    Napi::Object VAR = args[I].As<Napi::Object>();
 
 #define ARG_INT(I, VAR) \
-    if (args.Length() <= (I) || !args[I]->IsInt32()) { \
-        Nan::ThrowError(v8::Exception::TypeError( \
-            Nan::New("Argument " #I " must be an integer").ToLocalChecked())); \
+    if (args.Length() <= (I) || !args[I].IsNumber()) { \
+        Napi::ThrowError(v8::Exception::TypeError( \
+            Napi::String::New(env, "Argument " #I " must be an integer"))); \
 	} \
-    int32_t VAR = args[I]->Int32Value();
+    int32_t VAR = args[I].As<Napi::Number>().Int32Value();
 
 #define ARG_BUF(I, VAR) \
-    if (args.Length() <= (I) || !Buffer::HasInstance(args[I])) { \
-        Nan::ThrowError(v8::Exception::TypeError( \
-            Nan::New("Argument " #I " must be an Buffer").ToLocalChecked())); \
+    if (args.Length() <= (I) || !args[I].IsBuffer()) { \
+        Napi::ThrowError(v8::Exception::TypeError( \
+            Napi::String::New(env, "Argument " #I " must be an Buffer"))); \
 	} \
     void * VAR = Buffer::Data(args[I]->ToObject());
 
@@ -58,7 +59,7 @@
  * Class construction utilities
  */
 #define SET_ENUM_VALUE(target, _value) \
-        target->Set(Nan::New(#_value).ToLocalChecked(), \
-                Nan::New<Integer>(_value).ToLocalChecked(), \
-                static_cast<PropertyAttribute>(ReadOnly|DontDelete))
+        target.Set(Napi::New(env, #_value), \
+                Napi::Number::New(env, _value), \
+                static_cast<napi_property_attributes>(napi_enumerable | napi_configurable))
 

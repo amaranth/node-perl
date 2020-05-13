@@ -1,4 +1,4 @@
-#include <nan.h>
+#include <napi.h>
 
 #include <string>
 #include <iostream>
@@ -30,8 +30,9 @@ protected:
     PerlFoo(): my_perl(NULL) { }
     PerlFoo(PerlInterpreter *myp): my_perl(myp) { }
 public:
-	v8::Local<v8::Value> perl2js(SV * sv) {
-		Nan::EscapableHandleScope scope;
+	Napi::Value perl2js(const Napi::CallbackInfo& info, SV * sv) {
+		Napi::Env env = info.Env();
+		Napi::EscapableHandleScope scope(env);
 
         // see xs-src/pack.c in msgpack-perl
         SvGETMAGIC(sv);
@@ -39,37 +40,43 @@ public:
         if (SvPOKp(sv)) {
             STRLEN len;
             const char *s = SvPV(sv, len);
-            return scope.Escape(Nan::New(s, len).ToLocalChecked());
+            return scope.Escape(Napi::String::New(env, s, len));
         } else if (SvNOK(sv)) {
-            return scope.Escape(Nan::New<v8::Number>(SvNVX(sv)));
+            return scope.Escape(Napi::Number::New(env, SvNVX(sv)));
         } else if (SvIOK(sv)) {
-            return scope.Escape(Nan::New<v8::Number>(SvIVX(sv)));
+            return scope.Escape(Napi::Number::New(env, SvIVX(sv)));
         } else if (SvROK(sv)) {
             return scope.Escape(this->perl2js_rv(sv));
         } else if (!SvOK(sv)) {
-            return scope.Escape(Nan::Undefined());
+            return scope.Escape(env.Undefined());
         } else if (isGV(sv)) {
             std::cerr << "Cannot pass GV to v8 world" << std::endl;
-            return scope.Escape(Nan::Undefined());
+            return scope.Escape(env.Undefined());
         } else {
             sv_dump(sv);
-            Nan::ThrowError(v8::Exception::TypeError(Nan::New("node-perl-simple doesn't support this type").ToLocalChecked()));
-            return scope.Escape(Nan::Undefined());
+			Napi::TypeError::New(env, Napi::String::New(env, "node-perl-simple doesn't support this type")).ThrowAsJavaScriptException();
+
+            return scope.Escape(env.Undefined());
         }
         // TODO: return callback function for perl code.
         // Perl callbacks should be managed by objects.
         // TODO: Handle async.
     }
 
-    SV* js2perl(v8::Local<v8::Value> val) const;
+    SV* js2perl(Napi::Value val) const;
 
-	v8::Local<v8::Value> CallMethod2(const Nan::FunctionCallbackInfo<v8::Value>& info, bool in_list_context) {
-		const auto& args = info;
-        ARG_STR(0, method);
-        return this->CallMethod2(NULL, *method, 1, info, in_list_context);
+	Napi::Value CallMethod2(const Napi::CallbackInfo& info, bool in_list_context) {
+		Napi::Env env = info.Env();
+		Napi::EscapableHandleScope scope(env);
+		Napi::Value method = info[0];
+		if (!method.IsString()) {
+			Napi::TypeError::New(env, "method name must be a string").ThrowAsJavaScriptException();
+		}
+        return this->CallMethod2(info, NULL, method.ToString().Utf8Value().c_str(), 1, info, in_list_context);
     }
-    v8::Local<v8::Value> CallMethod2(SV * self, const char *method, int offset, const Nan::FunctionCallbackInfo<v8::Value>& args, bool in_list_context) {
-        Nan::EscapableHandleScope scope;
+    Napi::Value CallMethod2(const Napi::CallbackInfo& info, SV * self, const char *method, int offset, const Napi::CallbackInfo& args, bool in_list_context) {
+		Napi::Env env = info.Env();
+        Napi::EscapableHandleScope scope(env);
 
         dSP;
         ENTER;
@@ -86,8 +93,9 @@ public:
                 PUTBACK;
                 FREETMPS;
                 LEAVE;
-                Nan::ThrowError(v8::Exception::Error(Nan::New("There is no way to pass this value to perl world.").ToLocalChecked()));
-                return scope.Escape(Nan::Undefined());
+                Napi::Error::New(env, Napi::String::New(env, "There is no way to pass this value to perl world.")).ThrowAsJavaScriptException();
+
+                return scope.Escape(env.Undefined());
             }
             XPUSHs(arg);
         }
@@ -100,13 +108,14 @@ public:
                 PUTBACK;
                 FREETMPS;
                 LEAVE;
-                Nan::ThrowError(this->perl2js(ERRSV));
-                return scope.Escape(Nan::Undefined());
+                Napi::Error::New(env, Napi::Value(env, this->perl2js(info, ERRSV)).ToString()).ThrowAsJavaScriptException();
+
+                return scope.Escape(env.Undefined());
             } else {
-				v8::Local<v8::Array> retval = Nan::New<v8::Array>();
+				Napi::Array retval = Napi::Array::New(env);
                 for (int i=0; i<n; i++) {
                     SV* retsv = POPs;
-                    retval->Set(n-i-1, this->perl2js(retsv));
+                    retval.Set(n-i-1, this->perl2js(info, retsv));
                 }
                 PUTBACK;
                 FREETMPS;
@@ -125,11 +134,12 @@ public:
                 PUTBACK;
                 FREETMPS;
                 LEAVE;
-                Nan::ThrowError(this->perl2js(ERRSV));
-                return scope.Escape(Nan::Undefined());
+                Napi::Error::New(env, Napi::Value(env, this->perl2js(info, ERRSV)).ToString()).ThrowAsJavaScriptException();
+
+                return scope.Escape(env.Undefined());
             } else {
                 SV* retsv = TOPs;
-                v8::Local<v8::Value> retval = this->perl2js(retsv);
+                Napi::Value retval = this->perl2js(info, retsv);
                 PUTBACK;
                 FREETMPS;
                 LEAVE;
@@ -138,126 +148,145 @@ public:
         }
     }
 
-    v8::Local<v8::Value> perl2js_rv(SV * rv);
+    Napi::Value perl2js_rv(SV * rv);
 };
 
-class NodePerlMethod : public Nan::ObjectWrap, public PerlFoo {
+class NodePerlMethod : public Napi::ObjectWrap<NodePerlMethod>, public PerlFoo {
 public:
     SV * sv_;
     std::string name_;
 
-    NodePerlMethod(SV *sv, const char * name, PerlInterpreter *myp): sv_(sv), name_(name), PerlFoo(myp) {
+    NodePerlMethod(const Napi::CallbackInfo& info, SV *sv, const char * name, PerlInterpreter *myp): Napi::ObjectWrap<NodePerlMethod>(info), PerlFoo(myp), sv_(sv), name_(name) {
         SvREFCNT_inc(sv);
     }
     ~NodePerlMethod() {
         SvREFCNT_dec(sv_);
     }
-	static Nan::Persistent<v8::FunctionTemplate> constructor_template;
+	// static Napi::FunctionReference constructor;
 
-	static inline Nan::Persistent<v8::Function> & constructor() {
-		static Nan::Persistent<v8::Function> my_constructor;
+	static inline Napi::FunctionReference & constructor() {
+		static Napi::FunctionReference my_constructor;
 		return my_constructor;
 	}
 
-    static NAN_MODULE_INIT(Init) {
+    static Napi::Object Init(Napi::Env env, Napi::Object exports) {
+
+		Napi::HandleScope scope(env);
+
+		Napi::Function func =
+			DefineClass(env,
+				"MyObject",
+				{ 
+					InstanceMethod("plusOne", &NodePerlMethod::call),
+					InstanceMethod("value", &NodePerlMethod::callList)
+				});
+
+		constructor = Napi::Persistent(func);
+		constructor.SuppressDestruct();
+
+		exports.Set("MyObject", func);
+		return exports;
+
 		// Prepare constructor template
-		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(NodePerlMethod::New);
-		tpl->SetClassName(Nan::New("NodePerlMethod").ToLocalChecked());
-		tpl->InstanceTemplate()->SetInternalFieldCount(2);
-		Nan::SetCallAsFunctionHandler(tpl->InstanceTemplate(), NodePerlMethod::call);
+		Napi::FunctionReference tpl = Napi::Function::New(env, NodePerlMethod::New);
+		tpl->SetClassName(Napi::String::New(env, "NodePerlMethod"));
+
+		Napi::SetCallAsFunctionHandler(tpl->InstanceTemplate(), NodePerlMethod::call);
 		        
-        Nan::SetPrototypeMethod(tpl, "call", NodePerlMethod::call);
-        Nan::SetPrototypeMethod(tpl, "callList", NodePerlMethod::callList);
-		//Nan::SetPrototypeMethod(tpl, "eval", NodePerl::evaluate);
+        Napi::SetPrototypeMethod(tpl, "call", NodePerlMethod::call);
+        Napi::SetPrototypeMethod(tpl, "callList", NodePerlMethod::callList);
+		//Napi::SetPrototypeMethod(tpl, "eval", NodePerl::evaluate);
 
-		constructor_template.Reset(tpl);
+		constructor.Reset(tpl);
 
-		constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
-		Nan::Set(target, Nan::New("NodePerlMethod").ToLocalChecked(),
-			Nan::GetFunction(tpl).ToLocalChecked());
+		constructor().Reset(Napi::GetFunction(tpl));
+		(target).Set(Napi::String::New(env, "NodePerlMethod"),
+			Napi::GetFunction(tpl));
     }
-    static NAN_METHOD(New) {
+    static Napi::Value New(const Napi::CallbackInfo& info) {
 		if (info.IsConstructCall()) {
-			const Nan::FunctionCallbackInfo<v8::Value>& args = info;
-			ARG_EXT(0, jssv);
-			ARG_EXT(1, jsmyp);
-			ARG_STR(2, jsname);
-			SV* sv = static_cast<SV*>(jssv->Value());
-			PerlInterpreter* myp = static_cast<PerlInterpreter*>(jsmyp->Value());
-			NodePerlMethod *obj = new NodePerlMethod(sv, *jsname, myp);
+			const Napi::CallbackInfo& args = info;
+			auto jssv = info[0];
+			auto jsmyp = info[1];
+			auto jsname = info[2];
+			SV* sv = jssv.As<SV*>();
+			PerlInterpreter* myp = jsmyp.As<PerlInterpreter*>();
+			auto name = jsname.ToString().Utf8Value().c_str();
+			NodePerlMethod *obj = new NodePerlMethod(info, sv, name, myp);
 			obj->Wrap(info.This());
-			info.GetReturnValue().Set(info.This());
+			return info.This();
 		}
 		else {
 			const int argc = 3;
-			v8::Local<v8::Value> argv[argc] = { info[0], info[1], info[2] };
-			info.GetReturnValue().Set(Nan::NewInstance(Nan::New(constructor()), argc, argv).ToLocalChecked());
+			Napi::Value argv[argc] = { info[0], info[1], info[2] };
+			return Napi::NewInstance(Napi::New(env, constructor()), argc, argv);
 		}
     }
-    static NAN_METHOD(call) {
-        return info.GetReturnValue().Set(Unwrap<NodePerlMethod>(info.This())->Call(info, false));
+    static Napi::Value call(const Napi::CallbackInfo& info) {
+        return Unwrap(info.This().As<Napi::Object>())->Call(info, false);
     }
-    static NAN_METHOD(callList) {
-        return info.GetReturnValue().Set(Unwrap<NodePerlMethod>(info.This())->Call(info, true));
+    static Napi::Value callList(const Napi::CallbackInfo& info) {
+        return Unwrap(info.This().As<Napi::Object>())->Call(info, true);
     }
 
-    v8::Local<v8::Value> Call(const Nan::FunctionCallbackInfo<v8::Value>& info, bool in_list_context) {
-        return this->CallMethod2(this->sv_, name_.c_str(), 0, info, in_list_context);
+    Napi::Value Call(const Napi::CallbackInfo& info, bool in_list_context) {
+        return this->CallMethod2(info, this->sv_, name_.c_str(), 0, info, in_list_context);
     }
 };
 
-class NodePerlObject : public Nan::ObjectWrap, public PerlFoo {
+class NodePerlObject : public Napi::ObjectWrap<NodePerlObject>, public PerlFoo {
 protected:
     SV * sv_;
 
 public:
-	static Nan::Persistent<v8::FunctionTemplate> constructor_template;
+	static Napi::FunctionReference constructor;
 
-	static inline Nan::Persistent<v8::Function> & constructor() {
-		static Nan::Persistent<v8::Function> my_constructor;
+	static inline Napi::FunctionReference & constructor() {
+		static Napi::FunctionReference my_constructor;
 		return my_constructor;
 	}
 
-	static NAN_MODULE_INIT(Init) {
+	static Napi::Object Init(Napi::Env env, Napi::Object exports) {
 		// Prepare constructor template
-		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
-		tpl->SetClassName(Nan::New("NodePerlObject").ToLocalChecked());
-		tpl->InstanceTemplate()->SetInternalFieldCount(1);
-		Nan::SetNamedPropertyHandler(tpl->InstanceTemplate(), NodePerlObject::GetNamedProperty);
+		Napi::FunctionReference tpl = Napi::Function::New(env, New);
+		tpl->SetClassName(Napi::String::New(env, "NodePerlObject"));
 
-		Nan::SetPrototypeMethod(tpl, "getClassName", NodePerlObject::getClassName);
+		Napi::SetNamedPropertyHandler(tpl->InstanceTemplate(), NodePerlObject::GetNamedProperty);
+
+		Napi::SetPrototypeMethod(tpl, "getClassName", NodePerlObject::getClassName);
 		
-		constructor_template.Reset(tpl);
+		constructor.Reset(tpl);
 
-		constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
-		Nan::Set(target, Nan::New("NodePerlObject").ToLocalChecked(),
-			Nan::GetFunction(tpl).ToLocalChecked());
+		constructor().Reset(Napi::GetFunction(tpl));
+		(target).Set(Napi::String::New(env, "NodePerlObject"),
+			Napi::GetFunction(tpl));
     }
 
     static void GetNamedProperty(
-		v8::Local<v8::String> propertyName,
-		const Nan::PropertyCallbackInfo<v8::Value>& info
+		Napi::String propertyName,
+		const Napi::PropertyCallbackInfo<v8::Value>& info
 	) {
-        if (info.This()->InternalFieldCount() < 1 || info.Data().IsEmpty()) {
-            Nan::ThrowError(v8::Exception::Error(Nan::New("SetNamedProperty intercepted by non-Proxy object").ToLocalChecked()));
-            info.GetReturnValue().Set(Nan::Undefined());
+        if (info.This().InternalFieldCount() < 1 || info.Data().IsEmpty()) {
+            Napi::Error::New(env, v8::Exception::Error(Napi::String::New(env, "SetNamedProperty intercepted by non-Proxy object"))).ThrowAsJavaScriptException();
+
+            return env.Undefined();
 			return;
         }
 
-        info.GetReturnValue().Set(Unwrap<NodePerlObject>(info.This())->getNamedProperty(propertyName));
+        return Unwrap<NodePerlObject>(info.This())->getNamedProperty(propertyName);
 		return;
     }
 
-    v8::Local<v8::Value> getNamedProperty(const v8::Local<v8::String> propertyName) const
+    Napi::Value getNamedProperty(const Napi::String propertyName) const
     {
-        Nan::EscapableHandleScope scope;
-        v8::String::Utf8Value stmt(propertyName);
-        v8::Local<v8::Value> arg0 = Nan::New<v8::External>(sv_);
-        v8::Local<v8::Value> arg1 = Nan::New<v8::External>(my_perl);
-        v8::Local<v8::Value> arg2 = propertyName;
-        v8::Local<v8::Value> args[] = {arg0, arg1, arg2};
-        v8::Local<v8::Object> retval(
-			Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlMethod::constructor_template)->GetFunction(), 3, args).ToLocalChecked()
+        Napi::EscapableHandleScope scope(env);
+        Napi::String stmt(env, propertyName);
+        Napi::Value arg0 = Napi::External::New(env, sv_);
+        Napi::Value arg1 = Napi::External::New(env, my_perl);
+        Napi::Value arg2 = propertyName;
+        Napi::Value args[] = {arg0, arg1, arg2};
+        Napi::Object retval(
+			Napi::NewInstance(Napi::Function::New(env, NodePerlMethod::constructor), 3, args)
         );
         return scope.Escape(retval);
     }
@@ -268,92 +297,92 @@ public:
     ~NodePerlObject() {
         SvREFCNT_dec(sv_);
     }
-    static NAN_METHOD(getClassName) {
-        return info.GetReturnValue().Set(Unwrap<NodePerlObject>(info.This())->getClassName());
+    static Napi::Value getClassName(const Napi::CallbackInfo& info) {
+        return return Unwrap<NodePerlObject>(info.This())->getClassName();
     }
-	v8::Local<v8::Value> getClassName() const
+	Napi::Value getClassName() const
 	{
-		Nan::EscapableHandleScope scope;
+		Napi::EscapableHandleScope scope(env);
         if (SvPOK(sv_)) {
             STRLEN len;
             const char * str = SvPV(sv_, len);
-            return scope.Escape(Nan::New(str, len).ToLocalChecked());
+            return scope.Escape(Napi::New(env, str, len));
         } else {
-            return scope.Escape(Nan::New(sv_reftype(SvRV(sv_), TRUE)).ToLocalChecked());
+            return scope.Escape(Napi::New(env, sv_reftype(SvRV(sv_), TRUE)));
         }
     }
-    static SV* getSV(v8::Local<v8::Object> val) {
+    static SV* getSV(Napi::Object val) {
         return Unwrap<NodePerlObject>(val)->sv_;
     }
-    static v8::Local<v8::Value> blessed(v8::Local<v8::Object> val) {
+    static Napi::Value blessed(Napi::Object val) {
         return Unwrap<NodePerlObject>(val)->blessed();
     }
-    v8::Local<v8::Value> blessed() const
+    Napi::Value blessed() const
     {
-        Nan::EscapableHandleScope scope;
+        Napi::EscapableHandleScope scope(env);
         if(!(SvROK(sv_) && SvOBJECT(SvRV(sv_)))) {
-            return scope.Escape(Nan::Undefined());
+            return scope.Escape(env.Undefined());
         }
-        return scope.Escape(Nan::New(sv_reftype(SvRV(sv_),TRUE)).ToLocalChecked());
+        return scope.Escape(Napi::New(env, sv_reftype(SvRV(sv_),TRUE)));
     }
 
-    static NAN_METHOD(New) {
-		const Nan::FunctionCallbackInfo<v8::Value>& args = info;
+    static Napi::Value New(const Napi::CallbackInfo& info) {
+		const Napi::CallbackInfo& args = info;
 
         ARG_EXT(0, jssv);
         ARG_EXT(1, jsmyp);
         SV* sv = static_cast<SV*>(jssv->Value());
         PerlInterpreter* myp = static_cast<PerlInterpreter*>(jsmyp->Value());
         (new NodePerlObject(sv, myp))->Wrap(args.Holder());
-        return info.GetReturnValue().Set(args.Holder());
+        return return args.Holder();
     }
 };
 
 class NodePerlClass : public NodePerlObject {
 public:
-	static Nan::Persistent<v8::FunctionTemplate> constructor_template;
+	static Napi::FunctionReference constructor;
 
-	static inline Nan::Persistent<v8::Function> & constructor() {
-		static Nan::Persistent<v8::Function> my_constructor;
+	static inline Napi::FunctionReference & constructor() {
+		static Napi::FunctionReference my_constructor;
 		return my_constructor;
 	}
 
-    static NAN_MODULE_INIT(Init) {
+    static Napi::Object Init(Napi::Env env, Napi::Object exports) {
 		// Prepare constructor template
-		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
-		tpl->SetClassName(Nan::New("NodePerlClass").ToLocalChecked());
-		tpl->InstanceTemplate()->SetInternalFieldCount(1);
-    	Nan::SetNamedPropertyHandler(tpl->InstanceTemplate(), NodePerlObject::GetNamedProperty);
+		Napi::FunctionReference tpl = Napi::Function::New(env, New);
+		tpl->SetClassName(Napi::String::New(env, "NodePerlClass"));
 
-		constructor_template.Reset(tpl);
+    	Napi::SetNamedPropertyHandler(tpl->InstanceTemplate(), NodePerlObject::GetNamedProperty);
 
-		constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
-		Nan::Set(target, Nan::New("NodePerlClass").ToLocalChecked(),
-			Nan::GetFunction(tpl).ToLocalChecked());
+		constructor.Reset(tpl);
+
+		constructor().Reset(Napi::GetFunction(tpl));
+		(target).Set(Napi::String::New(env, "NodePerlClass"),
+			Napi::GetFunction(tpl));
     }
 };
 
-class NodePerl : public Nan::ObjectWrap, public PerlFoo {
+class NodePerl : public Napi::ObjectWrap<NodePerl>, public PerlFoo {
 
 public:
-	static inline Nan::Persistent<v8::Function> & constructor() {
-		static Nan::Persistent<v8::Function> my_constructor;
+	static inline Napi::FunctionReference & constructor() {
+		static Napi::FunctionReference my_constructor;
 		return my_constructor;
 	}
 
-	static NAN_MODULE_INIT(Init) {
-		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
-        Nan::SetPrototypeMethod(tpl, "evaluate", NodePerl::evaluate);
-        Nan::SetPrototypeMethod(tpl, "getClass", NodePerl::getClass);
-        Nan::SetPrototypeMethod(tpl, "call",	 NodePerl::call);
-        Nan::SetPrototypeMethod(tpl, "callList", NodePerl::callList);
-        Nan::SetPrototypeMethod(tpl, "destroy", NodePerl::destroy);
-        tpl->InstanceTemplate()->SetInternalFieldCount(1);
-        Nan::SetMethod(tpl, "blessed", NodePerl::blessed);
+	static Napi::Object Init(Napi::Env env, Napi::Object exports) {
+		Napi::FunctionReference tpl = Napi::Function::New(env, New);
+        Napi::SetPrototypeMethod(tpl, "evaluate", NodePerl::evaluate);
+        Napi::SetPrototypeMethod(tpl, "getClass", NodePerl::getClass);
+        Napi::SetPrototypeMethod(tpl, "call",	 NodePerl::call);
+        Napi::SetPrototypeMethod(tpl, "callList", NodePerl::callList);
+        Napi::SetPrototypeMethod(tpl, "destroy", NodePerl::destroy);
+
+        Napi::SetMethod(tpl, "blessed", NodePerl::blessed);
         
-		constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
-		Nan::Set(target, Nan::New("Perl").ToLocalChecked(),
-			Nan::GetFunction(tpl).ToLocalChecked());
+		constructor().Reset(Napi::GetFunction(tpl));
+		(target).Set(Napi::String::New(env, "Perl"),
+			Napi::GetFunction(tpl));
     }
 
     NodePerl() : PerlFoo() {
@@ -380,57 +409,59 @@ public:
         perl_free(my_perl);
     }
 
-    static NAN_METHOD(New) {
+    static Napi::Value New(const Napi::CallbackInfo& info) {
 		if (!info.IsConstructCall()) {
-			return info.GetReturnValue().Set(Nan::NewInstance(Nan::New(constructor()), 0, {}).ToLocalChecked());
+			return return Napi::NewInstance(Napi::New(env, constructor()), 0, {});
 		}
         (new NodePerl())->Wrap(info.Holder());
-        return info.GetReturnValue().Set(info.Holder());
+        return return info.Holder();
     }
 
-    static NAN_METHOD(blessed) {
+    static Napi::Value blessed(const Napi::CallbackInfo& info) {
 		const auto& args = info;
         ARG_OBJ(0, jsobj);
 
-        if (Nan::New<v8::FunctionTemplate>(NodePerlObject::constructor_template)->HasInstance(jsobj)) {
-            return info.GetReturnValue().Set(NodePerlObject::blessed(jsobj));
+        if (Napi::Function::New(env, NodePerlObject::constructor)->HasInstance(jsobj)) {
+            return return NodePerlObject::blessed(jsobj);
         } else {
-            return info.GetReturnValue().Set(Nan::Undefined());
+            return return env.Undefined();
         }
     }
 
-    static NAN_METHOD(evaluate) {
-        if (!info[0]->IsString()) {
-            Nan::ThrowError(v8::Exception::Error(Nan::New("Arguments must be string").ToLocalChecked()));
-            return info.GetReturnValue().Set(Nan::Undefined());
+    static Napi::Value evaluate(const Napi::CallbackInfo& info) {
+        if (!info[0].IsString()) {
+            Napi::Error::New(env, v8::Exception::Error(Napi::String::New(env, "Arguments must be string"))).ThrowAsJavaScriptException();
+
+            return return env.Undefined();
 	}
-        v8::String::Utf8Value stmt(info[0]);
+        Napi::String stmt(env, info[0]);
 
-        v8::Local<v8::Value> retval = Unwrap<NodePerl>(info.This())->evaluate(*stmt);
-        return info.GetReturnValue().Set(retval);
+        Napi::Value retval = Unwrap<NodePerl>(info.This())->evaluate(*stmt);
+        return return retval;
     }
 
-    static NAN_METHOD(getClass) {
-        if (!info[0]->IsString()) {
-            Nan::ThrowError(v8::Exception::Error(Nan::New("Arguments must be string").ToLocalChecked()));
-            return info.GetReturnValue().Set(Nan::Undefined());
+    static Napi::Value getClass(const Napi::CallbackInfo& info) {
+        if (!info[0].IsString()) {
+            Napi::Error::New(env, v8::Exception::Error(Napi::String::New(env, "Arguments must be string"))).ThrowAsJavaScriptException();
+
+            return return env.Undefined();
         }
-        v8::String::Utf8Value stmt(info[0]);
+        Napi::String stmt(env, info[0]);
 
-        v8::Local<v8::Value> retval = Unwrap<NodePerl>(info.This())->getClass(*stmt);
-        return info.GetReturnValue().Set(retval);
+        Napi::Value retval = Unwrap<NodePerl>(info.This())->getClass(*stmt);
+        return return retval;
     }
 
-    static NAN_METHOD(call) {
+    static Napi::Value call(const Napi::CallbackInfo& info) {
 		NodePerl *nodePerl = Unwrap<NodePerl>(info.This());
-		info.GetReturnValue().Set(nodePerl->CallMethod2(info, false));
+		return nodePerl->CallMethod2(info, false);
     }
-    static NAN_METHOD(callList) {
+    static Napi::Value callList(const Napi::CallbackInfo& info) {
 		NodePerl *nodePerl = Unwrap<NodePerl>(info.This());
-		info.GetReturnValue().Set(nodePerl->CallMethod2(info, true));
+		return nodePerl->CallMethod2(info, true);
     }
 
-	static NAN_METHOD(destroy) {
+	static Napi::Value destroy(const Napi::CallbackInfo& info) {
 		return Unwrap<NodePerl>(info.This())->destroy();
 	}
 
@@ -442,34 +473,34 @@ private:
 		this->~NodePerl();
 	}
 
-    v8::Local<v8::Value> getClass(const char *name) const
+    Napi::Value getClass(const char *name) const
     {
-        Nan::EscapableHandleScope scope;
-        v8::Local<v8::Value> arg0 = Nan::New<v8::External>(sv_2mortal(newSVpv(name, 0)));
-        v8::Local<v8::Value> arg1 = Nan::New<v8::External>(my_perl);
-        v8::Local<v8::Value> info[] = {arg0, arg1};
-        v8::Local<v8::Object> retval(
-			Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlClass::constructor_template)->GetFunction(), 2, info).ToLocalChecked()
+        Napi::EscapableHandleScope scope(env);
+        Napi::Value arg0 = Napi::External::New(env, sv_2mortal(newSVpv(name, 0)));
+        Napi::Value arg1 = Napi::External::New(env, my_perl);
+        Napi::Value info[] = {arg0, arg1};
+        Napi::Object retval(
+			Napi::NewInstance(Napi::Function::New(env, NodePerlClass::constructor), 2, info)
         );
         return scope.Escape(retval);
     }
-    v8::Local<v8::Value> evaluate(const char *stmt) {
+    Napi::Value evaluate(const char *stmt) {
         return perl2js(eval_pv(stmt, TRUE));
     }
 
 public:
 };
 
-SV* PerlFoo::js2perl(v8::Local<v8::Value> val) const {
+SV* PerlFoo::js2perl(Napi::Value val) const {
     if (val->IsTrue()) {
         return &PL_sv_yes;
     } else if (val->IsFalse()) {
         return &PL_sv_no;
-    } else if (val->IsString()) {
-        v8::String::Utf8Value method(val);
-        return sv_2mortal(newSVpv(*method, method.length()));
+    } else if (val.IsString()) {
+        Napi::String method(env, val);
+        return sv_2mortal(newSVpv(*method, method.Length()));
     } else if (val->IsArray()) {
-		v8::Local<v8::Array> jsav = v8::Local<v8::Array>::Cast(val);
+		Napi::Array jsav = val.As<Napi::Array>();
         AV * av = newAV();
         av_extend(av, jsav->Length());
         for (int i=0; i<jsav->Length(); ++i) {
@@ -477,9 +508,9 @@ SV* PerlFoo::js2perl(v8::Local<v8::Value> val) const {
             av_push(av, SvREFCNT_inc(elem));
         }
         return sv_2mortal(newRV_noinc((SV*)av));
-    } else if (val->IsObject()) {
-		v8::Local<v8::Object> jsobj = v8::Local<v8::Object>::Cast(val);
-		v8::Local<v8::FunctionTemplate> NodePerlObject = Nan::New<v8::FunctionTemplate>(NodePerlObject::constructor_template);
+    } else if (val.IsObject()) {
+		Napi::Object jsobj = val.As<Napi::Object>();
+		Napi::FunctionReference NodePerlObject = Napi::Function::New(env, NodePerlObject::constructor);
         if (NodePerlObject->HasInstance(jsobj)) {
             SV * ret = NodePerlObject::getSV(jsobj);
             return ret;
@@ -487,7 +518,7 @@ SV* PerlFoo::js2perl(v8::Local<v8::Value> val) const {
             SV * ret = NodePerlObject::getSV(jsobj);
             return ret;
         } else {
-			v8::Local<v8::Array> keys = jsobj->GetOwnPropertyNames();
+			Napi::Array keys = jsobj->GetOwnPropertyNames();
             HV * hv = newHV();
             hv_ksplit(hv, keys->Length());
             for (int i=0; i<keys->Length(); ++i) {
@@ -498,39 +529,39 @@ SV* PerlFoo::js2perl(v8::Local<v8::Value> val) const {
             }
             return sv_2mortal(newRV_inc((SV*)hv));
         }
-    } else if (val->IsInt32()) {
-        return sv_2mortal(newSViv(val->Int32Value()));
+    } else if (val.IsNumber()) {
+        return sv_2mortal(newSViv(val.As<Napi::Number>().Int32Value()));
     } else if (val->IsUint32()) {
-        return sv_2mortal(newSVuv(val->Uint32Value()));
-    } else if (val->IsNumber()) {
-        return sv_2mortal(newSVnv(val->NumberValue()));
+        return sv_2mortal(newSVuv(val.As<Napi::Number>().Uint32Value()));
+    } else if (val.IsNumber()) {
+        return sv_2mortal(newSVnv(val.As<Napi::Number>().DoubleValue()));
     } else {
         // RegExp, Date, External
         return NULL;
     }
 }
 
-v8::Local<v8::Value> PerlFoo::perl2js_rv(SV * rv) {
-    Nan::EscapableHandleScope scope;
+Napi::Value PerlFoo::perl2js_rv(SV * rv) {
+    Napi::EscapableHandleScope scope(env);
 
     SV *sv = SvRV(rv);
     SvGETMAGIC(sv);
     svtype svt = (svtype)SvTYPE(sv);
 
     if (SvOBJECT(sv)) { // blessed object.
-	    v8::Local<v8::Value> arg0 = Nan::New<v8::External>(rv);
-		v8::Local<v8::Value> arg1 = Nan::New<v8::External>(my_perl);
-	    v8::Local<v8::Value> args[] = {arg0, arg1};
-        v8::Local<v8::Object> retval(
-            Nan::NewInstance(Nan::New<v8::FunctionTemplate>(NodePerlObject::constructor_template)->GetFunction(),2, args).ToLocalChecked()
+	    Napi::Value arg0 = Napi::External::New(env, rv);
+		Napi::Value arg1 = Napi::External::New(env, my_perl);
+	    Napi::Value args[] = {arg0, arg1};
+        Napi::Object retval(
+            Napi::NewInstance(Napi::Function::New(env, NodePerlObject::constructor),2, args)
         );
         return scope.Escape(retval);
     } else if (svt == SVt_PVHV) {
         HV* hval = (HV*)sv;
         HE* he;
-        v8::Local<v8::Object> retval = Nan::New<v8::Object>();
+        Napi::Object retval = Napi::Object::New(env);
         while ((he = hv_iternext(hval))) {
-            retval->Set(
+            retval.Set(
                 this->perl2js(hv_iterkeysv(he)),
                 this->perl2js(hv_iterval(hval, he))
             );
@@ -538,29 +569,30 @@ v8::Local<v8::Value> PerlFoo::perl2js_rv(SV * rv) {
         return scope.Escape(retval);
     } else if (svt == SVt_PVAV) {
         AV* ary = (AV*)sv;
-        v8::Local<v8::Array> retval = Nan::New<v8::Array>();
+        Napi::Array retval = Napi::Array::New(env);
         int len = av_len(ary) + 1;
         for (int i=0; i<len; ++i) {
             SV** svp = av_fetch(ary, i, 0);
             if (svp) {
-                retval->Set(Nan::New<v8::Number>(i), this->perl2js(*svp));
+                retval.Set(Napi::Number::New(env, i), this->perl2js(*svp));
             } else {
-                retval->Set(Nan::New<v8::Number>(i), Nan::Undefined());
+                retval.Set(Napi::Number::New(env, i), env.Undefined());
             }
         }
         return scope.Escape(retval);
     } else if (svt < SVt_PVAV) {
         sv_dump(sv);
-        Nan::ThrowError(v8::Exception::Error(Nan::New("node-perl-simple doesn't support scalarref").ToLocalChecked()));
-        return scope.Escape(Nan::Undefined());
+        Napi::Error::New(env, v8::Exception::Error(Napi::String::New(env, "node-perl-simple doesn't support scalarref"))).ThrowAsJavaScriptException();
+
+        return scope.Escape(env.Undefined());
     } else {
-        return scope.Escape(Nan::Undefined());
+        return scope.Escape(env.Undefined());
     }
 }
 
-Nan::Persistent<v8::FunctionTemplate> NodePerlObject::constructor_template;
-Nan::Persistent<v8::FunctionTemplate> NodePerlMethod::constructor_template;
-Nan::Persistent<v8::FunctionTemplate> NodePerlClass::constructor_template;
+Napi::FunctionReference NodePerlObject::constructor;
+Napi::FunctionReference NodePerlMethod::constructor;
+Napi::FunctionReference NodePerlClass::constructor;
 
 /**
   * Load lazily libperl for dynamic loaded xs.
@@ -575,7 +607,8 @@ Nan::Persistent<v8::FunctionTemplate> NodePerlClass::constructor_template;
 #include <windows.h>
 #include <psapi.h>
 #include <stdio.h>
-static NAN_METHOD(InitPerl) {
+static Napi::Value InitPerl(const Napi::CallbackInfo& info) {
+	Napi::Env env = info.Env();
 	auto uMode = SetErrorMode(SEM_FAILCRITICALERRORS);
 	auto hModule = LoadLibraryEx(LIBPERL_DIR LIBPERL, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 	auto error = GetLastError();
@@ -593,34 +626,35 @@ static NAN_METHOD(InitPerl) {
 		}
 	}
 	SetErrorMode(uMode);	
-	return info.GetReturnValue().Set(Nan::Undefined());
+	return env.Undefined();
 }
 #else
 #include <dlfcn.h>
-static NAN_METHOD(InitPerl) {
+static Napi::Value InitPerl(const Napi::CallbackInfo& info) {
     void *lib = dlopen(LIBPERL, RTLD_LAZY|RTLD_GLOBAL);
     if (lib) {
         dlclose(lib);
-        return info.GetReturnValue().Set(Nan::Undefined());
+        return return env.Undefined();
     } else {
         std::cerr << dlerror() << std::endl;
-        return info.GetReturnValue().Set(Nan::Undefined());
-        // return Nan::ThrowError(v8::Exception::Error(Nan::New(dlerror())));
+        return return env.Undefined();
+        // Napi::Error::New(env, v8::Exception::Error(Napi::New(env, dlerror()))).ThrowAsJavaScriptException();
+ return env.Null();
     }
 }
 #endif
 
-extern "C" NAN_MODULE_INIT(init) {
+extern "C" Napi::Object init(Napi::Env env, Napi::Object exports) {
     {
-	    v8::Local<v8::FunctionTemplate> t = Nan::New<v8::FunctionTemplate>(InitPerl);
-        target->Set(Nan::New("InitPerl").ToLocalChecked(), t->GetFunction());
+	    Napi::FunctionReference t = Napi::Function::New(env, InitPerl);
+        target.Set(Napi::String::New(env, "InitPerl"), t->GetFunction());
     }
 
-    NodePerl::Init(target);
-    NodePerlObject::Init(target);
-    NodePerlClass::Init(target);
-    NodePerlMethod::Init(target);
+    NodePerl::Init(env, target, module);
+    NodePerlObject::Init(env, target, module);
+    NodePerlClass::Init(env, target, module);
+    NodePerlMethod::Init(env, target, module);
 }
 
-NODE_MODULE(perl, init)
+NODE_API_MODULE(perl, init)
 
